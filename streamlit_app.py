@@ -26,7 +26,7 @@ DB_PATH = "app_data.db"
 CONFIG_PATH = "config.json"
 EVAL_PATH = "hasil_evaluasi.csv"
 DISCLAIMER = "Prototipe pembelajaran, bukan alat diagnosis medis."
-MAX_FILES = 20
+MAX_FILES = 50
 DEFAULT_CONFIG = {
     "class_names": ["glioma", "meningioma", "notumor", "pituitary"],
     "img_size": 224,
@@ -118,7 +118,7 @@ def find_models():
     return sorted(set(paths))
 
 
-@st.cache_resource(show_spinner="Memuat model...")
+@st.cache_resource(show_spinner="Memuat model...", max_entries=1)
 def load_model(path):
     import tensorflow as tf
 
@@ -281,22 +281,64 @@ def page_auth():
                     (st.success if ok else st.error)(msg)
 
 
+def inject_css():
+    st.markdown(
+        """
+        <style>
+        .hero {background:#fff;border-radius:22px;padding:28px 34px;margin-bottom:18px;
+               box-shadow:0 6px 24px rgba(15,60,80,.08);}
+        .hero .kicker {font-size:12px;letter-spacing:.18em;font-weight:700;color:#0f5c6e;}
+        .hero h1 {margin:4px 0 6px 0;font-size:2.6rem;}
+        .hero p {margin:0;color:#4a5b66;}
+        .note {background:#fff;border-left:5px solid #0f5c6e;border-radius:12px;
+               padding:14px 18px;margin-bottom:18px;box-shadow:0 4px 16px rgba(15,60,80,.06);}
+        .section-kicker {font-size:12px;letter-spacing:.18em;font-weight:700;color:#0f5c6e;margin-top:10px;}
+        .modelbox {background:#e3f5ea;color:#1b6b3a;border-radius:12px;padding:14px 16px;font-weight:600;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def hero():
+    st.markdown(
+        """
+        <div class="hero">
+          <div class="kicker">MEDICAL IMAGE CLASSIFICATION &bull; RESEARCH PROTOTYPE</div>
+          <h1>Brain Tumor MRI Classifier</h1>
+          <p><b>Perbandingan CNN (MobileNetV2, ResNet50V2, InceptionV3) untuk klasifikasi tumor otak</b></p>
+          <p>Multi-image research prototype: glioma, meningioma, no tumor, pituitary</p>
+        </div>
+        <div class="note"><b>Prototipe penelitian.</b> Output adalah respons klasifikasi model untuk
+        demonstrasi akademik, bukan diagnosis klinis. Gunakan citra MRI otak yang mirip dengan data
+        training (Brain Tumor MRI Dataset).</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def page_predict(cfg):
-    st.title("Prediksi")
-    st.caption(DISCLAIMER)
+    hero()
     models = find_models()
     model = None
-    if models:
-        choice = st.selectbox("Model", models, format_func=os.path.basename)
-        try:
-            model = load_model(choice)
-        except Exception as e:
-            st.error(f"Model gagal dimuat: {e}")
-    else:
-        st.warning(
-            "Belum ada file model (.keras atau .h5) di repo. Unggah modelmu ke repo GitHub "
-            "agar prediksi bisa jalan. Sementara ini hanya pratinjau gambar yang aktif."
-        )
+    choice = None
+    with st.sidebar:
+        st.markdown("**Model aktif**")
+        if models:
+            choice = st.selectbox("Model", models, format_func=os.path.basename, label_visibility="collapsed")
+            st.markdown(f'<div class="modelbox">{os.path.basename(choice)}</div>', unsafe_allow_html=True)
+            try:
+                model = load_model(choice)
+                h, w, c = input_spec(model, cfg)
+                st.caption(f"Input {h}x{w}x{c} | Output {', '.join(cfg['class_names'])}")
+            except Exception as e:
+                st.error(f"Model gagal dimuat: {e}")
+        else:
+            st.warning("Belum ada file model (.keras / .h5) di repo. Hanya pratinjau gambar yang aktif.")
+        st.markdown("**Input prototype**")
+        st.caption("JPG / JPEG / PNG, multiple image files")
+        with st.expander("Advanced probability inspection"):
+            low_conf = st.slider("Batas keyakinan rendah", 0.30, 0.95, 0.60, 0.05)
 
     classes = cfg["class_names"]
     if model is not None:
@@ -309,61 +351,91 @@ def page_predict(cfg):
             )
             return
 
+    st.markdown('<div class="section-kicker">MULTI-IMAGE INPUT</div>', unsafe_allow_html=True)
+    st.subheader("Unggah gambar MRI")
+    st.caption(f"Maksimal {MAX_FILES} file sekali analisis.")
     files = st.file_uploader(
-        "Unggah gambar MRI (JPG, JPEG, PNG)",
+        "Pilih JPG / JPEG / PNG",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True,
     )
     if len(files) > MAX_FILES:
-        st.warning(f"Maksimal {MAX_FILES} gambar sekali analisis. Yang diproses {MAX_FILES} pertama.")
+        st.warning(f"Maksimal {MAX_FILES} gambar. Yang diproses {MAX_FILES} pertama.")
         files = files[:MAX_FILES]
     if not files:
         return
-    if not st.button("Jalankan prediksi", type="primary"):
+
+    if st.button("Jalankan analisis", type="primary"):
+        results = {}
+        bar = st.progress(0.0, text="Memproses...")
+        for n, f in enumerate(files, 1):
+            try:
+                img = Image.open(f)
+                img.load()
+            except Exception:
+                results[f.name] = {"error": True}
+                continue
+            if model is None:
+                shown, _ = preprocess(img, (int(cfg["img_size"]),) * 2 + (3,), cfg["rescale_255"])
+                results[f.name] = {"original": img.convert("RGB"), "preprocessed": shown,
+                                   "probs": None, "gradcam": None}
+            else:
+                res = analyze_image(model, img, cfg)
+                res["original"] = img.convert("RGB")
+                results[f.name] = res
+                top = int(np.argmax(res["probs"]))
+                db_run(
+                    "INSERT INTO history (username, model_name, filename, predicted_class, confidence, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (st.session_state["user"], os.path.basename(choice), f.name, classes[top],
+                     float(res["probs"][top]), datetime.now().isoformat(timespec="seconds")),
+                )
+            bar.progress(n / len(files), text=f"Memproses {n}/{len(files)}")
+        bar.empty()
+        st.session_state["results"] = results
+
+    results = st.session_state.get("results")
+    if not results:
+        return
+    results = {k: v for k, v in results.items() if not v.get("error")}
+    if not results:
+        st.error("Tidak ada file yang bisa dibaca sebagai gambar.")
         return
 
-    for f in files:
-        st.divider()
-        st.subheader(f.name)
-        try:
-            img = Image.open(f)
-            img.load()
-        except Exception:
-            st.error("File ini tidak bisa dibaca sebagai gambar.")
-            continue
-        if model is None:
-            shown, _ = preprocess(img, (int(cfg["img_size"]),) * 2 + (3,), cfg["rescale_255"])
-            c1, c2 = st.columns(2)
-            c1.image(img.convert("RGB"), caption="Gambar asli", width="stretch")
-            c2.image(shown, caption="Setelah pra-proses", width="stretch")
-            continue
-        res = analyze_image(model, img, cfg)
-        c1, c2, c3 = st.columns(3)
-        c1.image(img.convert("RGB"), caption="Gambar asli", width="stretch")
-        c2.image(res["preprocessed"], caption="Setelah pra-proses", width="stretch")
-        if res["gradcam"] is not None:
-            c3.image(res["gradcam"], caption="Heatmap Grad-CAM", width="stretch")
-        else:
-            c3.caption("Grad-CAM tidak tersedia untuk arsitektur model ini.")
-        probs = res["probs"]
+    st.markdown('<div class="section-kicker">HASIL</div>', unsafe_allow_html=True)
+    st.subheader("Ringkasan analisis")
+    if next(iter(results.values()))["probs"] is not None:
+        rows = []
+        for name, r in results.items():
+            top = int(np.argmax(r["probs"]))
+            rows.append({"File": name, "Prediksi": classes[top],
+                         "Keyakinan": f"{r['probs'][top] * 100:.1f}%",
+                         "Catatan": "keyakinan rendah" if r["probs"][top] < low_conf else ""})
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    pilih = st.selectbox("Pilih image untuk inspeksi detail", list(results.keys()))
+    r = results[pilih]
+    c1, c2, c3 = st.columns(3)
+    c1.markdown("**Original**")
+    c1.image(r["original"], width="stretch")
+    c1.caption("Uploaded RGB image")
+    c2.markdown("**Pra-proses**")
+    c2.image(r["preprocessed"], width="stretch")
+    c2.caption("Resize ke ukuran input model")
+    c3.markdown("**Overlay Grad-CAM**")
+    if r["gradcam"] is not None:
+        c3.image(r["gradcam"], width="stretch")
+        c3.caption("Area yang paling memengaruhi prediksi")
+    else:
+        c3.caption("Grad-CAM tidak tersedia.")
+    if r["probs"] is not None:
+        probs = r["probs"]
         top = int(np.argmax(probs))
         st.markdown(f"Hasil prediksi: **{classes[top]}** ({probs[top] * 100:.1f}%)")
-        if probs[top] < 0.6:
+        if probs[top] < low_conf:
             st.caption("Keyakinan model rendah, hasil ini kurang bisa dipercaya.")
         for i in np.argsort(probs)[::-1]:
             st.progress(float(probs[i]), text=f"{classes[i]}  {probs[i] * 100:.1f}%")
-        db_run(
-            "INSERT INTO history (username, model_name, filename, predicted_class, confidence, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                st.session_state["user"],
-                os.path.basename(choice),
-                f.name,
-                classes[top],
-                float(probs[top]),
-                datetime.now().isoformat(timespec="seconds"),
-            ),
-        )
 
 
 def page_compare():
@@ -422,13 +494,14 @@ def page_history():
 def main():
     st.set_page_config(page_title="Klasifikasi tumor otak", layout="wide")
     init_db()
+    inject_css()
     if "user" not in st.session_state:
         page_auth()
         return
     cfg = load_config()
     with st.sidebar:
-        st.subheader("Brain tumor app")
-        st.caption(DISCLAIMER)
+        st.subheader("Brain Tumor MRI")
+        st.caption("MobileNetV2 / ResNet50V2 / InceptionV3")
         page = st.radio("Menu", ["Prediksi", "Perbandingan model", "Riwayat"])
         st.divider()
         st.caption(f"Masuk sebagai {st.session_state['user']}")
