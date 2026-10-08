@@ -255,8 +255,7 @@ def analyze_image(model, img, cfg):
 
 # ------------------------------------------------------------------ halaman
 def page_auth():
-    st.title("Klasifikasi tumor otak")
-    st.caption(DISCLAIMER)
+    hero()
     tab_login, tab_daftar = st.tabs(["Masuk", "Daftar"])
     with tab_login:
         with st.form("form_masuk"):
@@ -285,15 +284,18 @@ def inject_css():
     st.markdown(
         """
         <style>
-        .hero {background:#fff;border-radius:22px;padding:28px 34px;margin-bottom:18px;
-               box-shadow:0 6px 24px rgba(15,60,80,.08);}
-        .hero .kicker {font-size:12px;letter-spacing:.18em;font-weight:700;color:#0f5c6e;}
-        .hero h1 {margin:4px 0 6px 0;font-size:2.6rem;}
-        .hero p {margin:0;color:#4a5b66;}
-        .note {background:#fff;border-left:5px solid #0f5c6e;border-radius:12px;
-               padding:14px 18px;margin-bottom:18px;box-shadow:0 4px 16px rgba(15,60,80,.06);}
+        .hero {background:#ffffff;border-radius:22px;padding:28px 34px;margin-bottom:18px;
+               box-shadow:0 6px 24px rgba(15,60,80,.12);}
+        .hero, .hero p, .hero b, .hero h1 {color:#10242d !important;}
+        .hero .kicker {font-size:12px;letter-spacing:.18em;font-weight:700;color:#0f5c6e !important;}
+        .hero h1 {margin:4px 0 6px 0;font-size:2.6rem;font-weight:800;}
+        .hero p {margin:0;color:#4a5b66 !important;}
+        .hero p b {color:#10242d !important;}
+        .note {background:#ffffff;border-left:5px solid #0f5c6e;border-radius:12px;
+               padding:14px 18px;margin-bottom:18px;box-shadow:0 4px 16px rgba(15,60,80,.10);}
+        .note, .note b {color:#10242d !important;}
         .section-kicker {font-size:12px;letter-spacing:.18em;font-weight:700;color:#0f5c6e;margin-top:10px;}
-        .modelbox {background:#e3f5ea;color:#1b6b3a;border-radius:12px;padding:14px 16px;font-weight:600;}
+        .modelbox {background:#e3f5ea;color:#1b6b3a !important;border-radius:12px;padding:14px 16px;font-weight:600;}
         </style>
         """,
         unsafe_allow_html=True,
