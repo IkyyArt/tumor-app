@@ -1,0 +1,4 @@
+model,akurasi,precision,recall,f1
+MobileNetV2,0.8219,0.83,0.82,0.82
+ResNet50V2,0.8462,0.85,0.85,0.84
+InceptionV3,0.8131,0.81,0.81,0.81
